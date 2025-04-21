@@ -370,19 +370,19 @@ export default function TestingPage() {
                   <div className="bg-gray-800 rounded-lg p-4">
                     <h3 className="font-semibold text-indigo-400 mb-2">Agent Response:</h3>
                     <p className="text-gray-300 whitespace-pre-wrap">
-                      {typeof response === 'object' && response !== null && response.response 
+                      {typeof response === 'object' && response !== null && typeof response.response === 'string' 
                         ? response.response 
                         : typeof response === 'string' 
-                        ? response
-                        : 'No text response received.'}
+                        ? response 
+                        : 'Processing or no text response...'}
                     </p>
                     {typeof response === 'object' && response !== null && response.audio_url && (
                       <div className="mt-4">
                         <h4 className="font-semibold text-indigo-500 mb-1 text-sm">Response Audio:</h4>
-                        <audio controls src={response.audio_url} className="w-full" />
+                        <audio controls autoPlay src={response.audio_url} className="w-full" />
                       </div>
                     )}
-                    {typeof response === 'object' && response !== null && response.errors && (
+                    {typeof response === 'object' && response !== null && response.errors && response.errors.length > 0 && (
                        <div className="mt-4 p-3 rounded bg-red-900/50 border border-red-500/30">
                          <h4 className="font-semibold text-red-400 mb-1 text-sm">Errors:</h4>
                          <pre className="text-red-300 text-xs whitespace-pre-wrap">

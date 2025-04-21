@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server';
 import { transcribeAudio, refineTranscription } from '../../../utils/speech-processing';
-import { textToSpeech } from '../../../utils/tts';
-import { bookingAgent } from '../../../agents/booking-agent';
-import { complaintAgent } from '../../../agents/complaint-agent';
-import { inquiryAgent } from '../../../agents/inquiry-agent';
-import { feedbackAgent } from '../../../agents/feedback-agent';
+import { textToSpeech, textToSpeechStreaming, nodeStreamToWebStream, BufferManager } from '../../../utils/tts';
+import { processInboundCall } from '../../../agents/main-agent';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../../../lib/db';
 import { verifyAuthToken } from '../../../lib/auth';
+import { ReadableStream } from 'stream/web';
 
 // Initialize the S3 client
 const s3Client = new S3Client({
@@ -26,6 +24,7 @@ const s3Client = new S3Client({
 export async function POST(request) {
   let responsePayload = {}; // Use an object to build the response
   let httpStatus = 200;
+  let textResponse = null; // Declare textResponse outside the try block
 
   try {
     // Verify authentication
@@ -34,27 +33,41 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const decoded = verifyAuthToken(token);
-    if (!decoded) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    try {
+      const decoded = verifyAuthToken(token);
+      if (!decoded) {
+        return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+      }
+    } catch (authError) {
+      console.error('Authentication error:', authError);
+      return NextResponse.json({ error: 'Authentication failed: ' + authError.message }, { status: 401 });
     }
 
     console.log('Voice chat endpoint called');
     
     // Parse request body
-    const data = await request.json();
-    console.log(`Voice chat data received: ${JSON.stringify(data).length} bytes`);
+    let data;
+    try {
+      data = await request.json();
+      console.log(`Voice chat data received: ${JSON.stringify(data).length} bytes`);
+    } catch (parseError) {
+      console.error('Error parsing request body:', parseError);
+      return NextResponse.json({ error: 'Invalid request body: ' + parseError.message }, { status: 400 });
+    }
     
     // Extract key fields
     const audioData = data.audio_data;
     const phoneNumber = data.phone_number;
-    const audioEnabled = data.audio_enabled === true || data.audio_enabled === 'true';
+    // Default audioEnabled to true unless explicitly false
+    const audioEnabled = data.audio_enabled !== false;
+    const useStreaming = data.streaming !== false; // Default streaming to true unless explicitly false
     const conversationId = data.conversation_id || `conv-${uuidv4()}`;
     const isNewChat = data.is_new_chat === true || data.is_new_chat === 'true';
     
     // Log the data we received
     console.log(`Voice chat phone_number: ${phoneNumber}`);
     console.log(`Voice chat audio_enabled: ${audioEnabled}`);
+    console.log(`Voice chat streaming: ${useStreaming}`);
     console.log(`Voice chat audio_data length: ${audioData ? audioData.length : 'None'}`);
     console.log(`Voice chat conversation_id: ${conversationId}`);
     console.log(`Voice chat is_new_chat: ${isNewChat}`);
@@ -114,114 +127,215 @@ export async function POST(request) {
       console.log(`Transcription result: ${JSON.stringify(transcriptionResult)}`);
     } catch (error) {
       console.error(`Transcription error: ${error}`);
-      return NextResponse.json(
-        { error: 'Failed to transcribe audio', message: error.message }, 
-        { status: 500 }
-      );
+      return NextResponse.json({ 
+        success: false, 
+        error: `Error calling AI service: ${error.message || 'Unknown error'}` 
+      }, { status: 500 });
     }
     
     if (!transcriptionResult.success) {
       console.error(`Transcription failed: ${transcriptionResult.error || 'Unknown error'}`);
-      return NextResponse.json(
-        { error: 'Failed to transcribe audio', message: transcriptionResult.error }, 
-        { status: 500 }
-      );
+      return NextResponse.json({ 
+        success: false, 
+        error: `Error calling AI service: ${transcriptionResult.error || 'Unknown error'}` 
+      }, { status: 500 });
     }
     
     const transcribedText = transcriptionResult.text;
     console.log(`Voice chat transcribed text: ${transcribedText}`);
     
-    // Get customer details from database
-    let customerName = '';
-    let customerDetails = { phone_number: phoneNumber, customer_name: 'Test Customer' }; // Placeholder
-    // COMMENTED OUT: Customer DB interaction
-    // try {
-    //   const customerResult = await query('SELECT * FROM customers WHERE phone_number = $1', [phoneNumber]);
-    //   if (customerResult.rows.length === 0) { ... } else { ... }
-    //   customerDetails = { phone_number: phoneNumber, customer_name: customerName };
-    // } catch (error) {
-    //   console.error(`Error getting customer details: ${error}`);
-    // }
+    // Initialize customerDetails without assuming a name
+    let customerDetails = { phone_number: phoneNumber, customer_name: '' }; // Pass empty name
     
-    // Process with appropriate agent based on content
-    // Simple keyword-based intent detection
-    let agentResponse;
-    const conversationData = { ...customerDetails, transcript: transcribedText };
-    
-    try {
-      // Agent routing logic (remains the same)
-      if (transcribedText.toLowerCase().includes('book') || 
-          transcribedText.toLowerCase().includes('appoint') || 
-          transcribedText.toLowerCase().includes('schedul')) {
-        agentResponse = await bookingAgent.run(transcribedText, []); // Assuming empty history for now
-      } 
-      else if (transcribedText.toLowerCase().includes('complain') || 
-               transcribedText.toLowerCase().includes('issue') || 
-               transcribedText.toLowerCase().includes('problem')) {
-        agentResponse = await complaintAgent.run(transcribedText, []);
-      }
-      else if (transcribedText.toLowerCase().includes('feedback') || 
-               transcribedText.toLowerCase().includes('suggest') || 
-               transcribedText.toLowerCase().includes('review')) {
-        agentResponse = await feedbackAgent.run(transcribedText, []);
-      }
-      else {
-        agentResponse = await inquiryAgent.run(transcribedText, []);
-      }
-      console.log("Agent response received:", agentResponse);
-      responsePayload.response = agentResponse; // Store agent text response
-    } catch (agentError) {
-      console.error("Error during agent processing:", agentError);
-      responsePayload.response = "Sorry, I encountered an error processing your request.";
-      responsePayload.errors = responsePayload.errors || [];
-      responsePayload.errors.push({ agentError: agentError.message });
-      // Optionally change status for critical agent errors
-      // httpStatus = 500; 
-    }
-    
-    // COMMENTED OUT: Conversation saving DB interaction
-    // try {
-    //   await query('INSERT INTO messages ...', [...]);
-    // } catch (error) {
-    //   console.error(`Error saving conversation: ${error}`);
-    // }
-    
-    // Generate audio response only if needed and agent succeeded
-    if (audioEnabled && typeof agentResponse === 'string' && agentResponse) {
-      console.log('Generating audio response');
+    // If streaming and audio enabled, create a response stream
+    if (audioEnabled && useStreaming) {
+      console.log('Setting up streaming audio response');
+      
       try {
-        const audioBuffer = await textToSpeech(agentResponse);
-        // Upload audio to S3 and add URL to payload
-        const audioKey = `responses/${conversationId}-${uuidv4()}.mp3`;
-        const putCommand = new PutObjectCommand({
-          Bucket: process.env.AWS_S3_BUCKET_NAME,
-          Key: audioKey,
-          Body: audioBuffer,
-          ContentType: 'audio/mpeg'
+        // Create a ReadableStream for streaming the audio response
+        const audioStream = new ReadableStream({
+          async start(controller) {
+            try {
+              // Set up buffer manager for adaptive buffering
+              const bufferManager = new BufferManager();
+              
+              // Fetch conversation history (not implemented yet)
+              const conversationHistory = [];
+              
+              // Process query with streaming enabled using our optimized orchestrator
+              console.log('Starting streaming agent response generation');
+              
+              // Skip the agent category determination and just use the main agent
+              try {
+                // Process the query with our main agent - note we pass binary audio
+                const result = await processInboundCall(
+                  binaryAudio,
+                  phoneNumber,
+                  conversationHistory
+                );
+                
+                // Since we're using the main agent directly and not streaming token by token,
+                // we need to process the full audio response
+                if (result && result.audioResponse) {
+                  try {
+                    // Send the audio response in chunks
+                    const chunks = splitBuffer(result.audioResponse, 8192); // Split into 8KB chunks
+                    for (const chunk of chunks) {
+                      controller.enqueue(chunk);
+                    }
+                  } catch (audioError) {
+                    console.error('Error processing audio response:', audioError);
+                    controller.enqueue(Buffer.from(JSON.stringify({
+                      error: 'Audio processing error',
+                      message: audioError.message
+                    })));
+                  }
+                } else {
+                  console.error('No audio response received from main agent');
+                  controller.enqueue(Buffer.from(JSON.stringify({
+                    error: 'No audio response',
+                    message: 'The agent did not generate an audio response'
+                  })));
+                }
+                
+                console.log('Streaming agent response completed');
+                if (result && result.errors && result.errors.length > 0) {
+                  console.warn('Agent completed with errors:', result.errors);
+                }
+                
+                // Close the stream
+                controller.close();
+              } catch (streamingError) {
+                console.error('Error in main agent processing:', streamingError);
+                controller.enqueue(Buffer.from(JSON.stringify({
+                  error: 'Agent processing error',
+                  message: streamingError.message
+                })));
+                controller.close();
+              }
+            } catch (error) {
+              console.error('Error in audio streaming:', error);
+              // CRITICAL: Instead of controller.error() which might cause non-JSON responses,
+              // enqueue an error message as a proper audio chunk
+              controller.enqueue(Buffer.from('An error occurred. Please try again later.'));
+              controller.close();
+            }
+          }
         });
-        await s3Client.send(putCommand);
-        const audioUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${audioKey}`;
-        responsePayload.audio_url = audioUrl;
-        console.log(`Audio response uploaded: ${audioUrl}`);
-      } catch (ttsError) {
-        console.error(`Error generating or uploading audio: ${ttsError}`);
-        responsePayload.errors = responsePayload.errors || [];
-        responsePayload.errors.push({ ttsError: ttsError.message });
+        
+        // Return the streaming response with proper error handling
+        try {
+          return new Response(audioStream, {
+            headers: {
+              'Content-Type': 'audio/mpeg',
+              'X-Conversation-ID': conversationId
+            }
+          });
+        } catch (responseError) {
+          console.error('Error creating streaming response:', responseError);
+          // If streaming response creation fails, fall back to JSON
+          return NextResponse.json({
+            success: false,
+            error: 'Streaming response failed',
+            message: responseError.message,
+            conversation_id: conversationId
+          }, { status: 500 });
+        }
+      } catch (streamSetupError) {
+        console.error('Error setting up audio stream:', streamSetupError);
+        // Fall back to JSON response if streaming setup fails
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to set up audio streaming',
+          message: streamSetupError.message,
+          conversation_id: conversationId
+        }, { status: 500 });
       }
-    } else if (audioEnabled) {
-      console.log('Skipping audio response generation (invalid agent response).');
+    } else {
+      console.log('Using non-streaming approach');
+      
+      try {
+        // Fetch conversation history (not implemented yet)
+        const conversationHistory = [];
+        
+        // Process query with our main agent
+        const result = await processInboundCall(
+          binaryAudio,
+          phoneNumber,
+          conversationHistory
+        );
+        
+        // Extract response data
+        textResponse = result.response;
+        
+        // Upload the audio to S3 if needed
+        let audioUrl = '';
+        if (audioEnabled && result.audioResponse) {
+          try {
+            // Create a unique key for the audio file
+            const audioKey = `responses/${conversationId}/response-${Date.now()}.mp3`;
+            
+            // Upload the audio to S3
+            const uploadResult = await s3Client.send(
+              new PutObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET,
+                Key: audioKey,
+                Body: result.audioResponse,
+                ContentType: 'audio/mpeg'
+              })
+            );
+            
+            // Set the audio URL
+            audioUrl = `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${audioKey}`;
+            console.log(`Audio response uploaded to ${audioUrl}`);
+          } catch (uploadError) {
+            console.error('Error uploading audio to S3:', uploadError);
+            // Continue without audio URL - client will still receive text response
+          }
+        }
+        
+        // Construct the response payload
+        responsePayload = {
+          success: true,
+          response: textResponse,
+          transcription: {
+            text: result.transcribedText,
+            refined: result.refinedQuery
+          },
+          audio_url: audioUrl,
+          conversation_id: conversationId,
+          category: result.category,
+          errors: result.errors || []
+        };
+      } catch (processingError) {
+        console.error('Error processing query:', processingError);
+        return NextResponse.json({
+          error: 'Failed to process query',
+          message: processingError.message,
+          conversation_id: conversationId
+        }, { status: 500 });
+      }
     }
     
-    // Prepare response
-    responsePayload.conversation_id = conversationId;
-    responsePayload.transcription = transcriptionResult; // Add transcription to response
-    
-    return NextResponse.json(responsePayload, { status: httpStatus });
+    // Return JSON response for non-streaming
+    return NextResponse.json(responsePayload);
   } catch (error) {
-    // Catch errors from auth, parsing, transcription, etc.
-    console.error('Unhandled error in voice-chat handler:', error);
-    responsePayload.error = error.message || 'An unexpected error occurred.';
-    httpStatus = error.status || 500; // Use error status if available
-    return NextResponse.json(responsePayload, { status: httpStatus });
+    console.error('Error in voice-chat API route:', error);
+    // Ensure all errors return proper JSON response, not HTML
+    return NextResponse.json({ 
+      success: false, 
+      error: error.message || 'An error occurred processing your request'
+    }, { status: 500 });
   }
+}
+
+// Helper function to split buffer into chunks
+function splitBuffer(buffer, chunkSize) {
+  const chunks = [];
+  let i = 0;
+  while (i < buffer.length) {
+    chunks.push(buffer.slice(i, i + chunkSize));
+    i += chunkSize;
+  }
+  return chunks;
 } 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { verifyToken } from '@/utils/auth';
-import { pool } from '@/utils/db';
+import { verifyAuthToken } from '../../../../lib/auth';
+import { pool } from '../../../../lib/db';
 
 export async function GET(request) {
   try {
@@ -9,7 +9,7 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
+    const decoded = await verifyAuthToken(token);
     if (!decoded) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
