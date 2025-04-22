@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -18,7 +18,21 @@ export default function TestingPage() {
   const [audioUrl, setAudioUrl] = useState(null);
   const [response, setResponse] = useState(null);
   const [transcription, setTranscription] = useState('');
+  const [currentConversationId, setCurrentConversationId] = useState(null);
   const router = useRouter();
+
+  // WebSocket and VAD refs
+  const socketRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const silenceStartRef = useRef(null);
+  
+  // VAD settings
+  const SILENCE_THRESHOLD = -50; // dB
+  const SILENCE_DURATION = 1500; // ms to consider "finished talking"
 
   useEffect(() => {
     // Check authentication
@@ -30,6 +44,20 @@ export default function TestingPage() {
 
     // Fetch all tables data
     fetchTablesData(token);
+    
+    // Clean up on unmount
+    return () => {
+      stopRecording();
+      closeWebSocket();
+      
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    };
   }, [router]);
 
   const fetchTablesData = async (token) => {
@@ -77,6 +105,133 @@ export default function TestingPage() {
     }
   };
 
+  const setupWebSocket = () => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      return; // Already connected
+    }
+    
+    // Create WebSocket connection
+    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const host = window.location.hostname; // Only get the hostname without port
+    const wsPort = 8000; // WebSocket server port
+    socketRef.current = new WebSocket(`${protocol}${host}:${wsPort}/api/websocket`);
+    
+    socketRef.current.onopen = () => {
+      console.log('WebSocket connection established');
+      
+      // Send initial metadata
+      socketRef.current.send(JSON.stringify({
+        type: 'init',
+        conversationId: currentConversationId || `conv-${Date.now()}`,
+        phoneNumber: 'test-phone-admin'
+      }));
+    };
+    
+    socketRef.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'init_ack') {
+          console.log('Connection initialized with ID:', data.conversationId);
+          setCurrentConversationId(data.conversationId);
+        } else if (data.type === 'transcription') {
+          setTranscription(data.text);
+        } else if (data.type === 'response') {
+          setResponse(data.text);
+        } else if (data.type === 'audio') {
+          // Handle audio data
+          try {
+            const audioData = data.data;
+            const audioBlob = new Blob(
+              [Uint8Array.from(atob(audioData), c => c.charCodeAt(0))], 
+              { type: 'audio/mp3' }
+            );
+            const url = URL.createObjectURL(audioBlob);
+            setAudioUrl(url);
+            
+            // Play the audio automatically
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play();
+          } catch (audioError) {
+            console.error('Error processing audio response:', audioError);
+            setError('Error playing audio: ' + audioError.message);
+          }
+        } else if (data.type === 'error') {
+          setError(data.error);
+        } else if (data.type === 'conversation_stored') {
+          console.log('Conversation stored successfully');
+          // Refresh the tables data
+          const token = localStorage.getItem('authToken');
+          if (token) fetchTablesData(token);
+        }
+      } catch (parseError) {
+        console.error('Error parsing WebSocket message:', parseError);
+        setError('Error processing response: ' + parseError.message);
+      }
+    };
+    
+    socketRef.current.onerror = (wsError) => {
+      console.error('WebSocket error event:', wsError);
+      setError('WebSocket error: Connection failed. Check console and server logs.');
+    };
+    
+    socketRef.current.onclose = () => {
+      console.log('WebSocket connection closed');
+    };
+  };
+  
+  const closeWebSocket = () => {
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+  };
+  
+  const setupVAD = (stream) => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // Create analyzer for voice activity detection
+    analyserRef.current = audioContextRef.current.createAnalyser();
+    analyserRef.current.fftSize = 256;
+    
+    // Connect microphone to analyzer
+    const source = audioContextRef.current.createMediaStreamSource(stream);
+    source.connect(analyserRef.current);
+    
+    // Start monitoring voice activity
+    checkVoiceActivity();
+  };
+  
+  const checkVoiceActivity = () => {
+    if (!analyserRef.current) return;
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(dataArray);
+    
+    // Calculate average volume
+    const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+    const dB = 20 * Math.log10(average / 255);
+    
+    // Check for silence
+    if (dB < SILENCE_THRESHOLD) {
+      if (!silenceStartRef.current) {
+        silenceStartRef.current = Date.now();
+      } else if (Date.now() - silenceStartRef.current > SILENCE_DURATION && isRecording) {
+        // User stopped talking
+        stopRecording();
+        return; // Stop monitoring after stopping recording
+      }
+    } else {
+      silenceStartRef.current = null;
+    }
+    
+    // Continue monitoring
+    animationFrameRef.current = requestAnimationFrame(checkVoiceActivity);
+  };
+
   const startRecording = async () => {
     try {
       const token = localStorage.getItem('authToken');
@@ -85,84 +240,92 @@ export default function TestingPage() {
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      const audioChunks = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        setAudioUrl(audioUrl);
-
-        // Convert audio to base64 and send to API
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64Audio = reader.result.split(',')[1];
-          setResponse(null); // Clear previous response
-          setTranscription('Processing audio...'); // Indicate processing
-          setError(''); // Clear previous errors
-          
-          try {
-            const apiResponse = await fetch('/api/voice-chat', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                audio_data: base64Audio,
-                phone_number: 'test-phone',
-                audio_enabled: true, // Assuming audio response desired
-                is_new_chat: true
-              })
-            });
-
-            if (apiResponse.status === 401) {
-              localStorage.removeItem('authToken');
-              router.push('/admin/login');
-              return;
-            }
-
-            const data = await apiResponse.json();
-            
-            // Update transcription state FIRST
-            if (data.transcription && data.transcription.text) {
-              setTranscription(data.transcription.text);
+      // Setup WebSocket if not already connected
+      setupWebSocket();
+      
+      // Wait for connection to establish if needed
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        await new Promise((resolve) => {
+          const checkConnection = () => {
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+              resolve();
             } else {
-              setTranscription('Transcription not available.');
+              setTimeout(checkConnection, 100);
             }
+          };
+          checkConnection();
+        });
+      }
 
-            if (!apiResponse.ok) {
-              throw new Error(data.error || `API Error: ${apiResponse.status}`);
-            }
-
-            // Set the response state (which might be an object)
-            setResponse(data); // Store the whole object
-
-          } catch (err) {
-            console.error("Audio processing error:", err);
-            setError(err.message);
-            setTranscription('Error during processing.'); // Update transcription state on error
-          }
-        };
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      // Setup VAD
+      setupVAD(stream);
+      
+      // Setup media recorder with small time slices
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 16000
+      });
+      
+      // Handle data available event - send chunks as they become available
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          // Convert to base64 and send
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64Audio = reader.result;
+            socketRef.current.send(JSON.stringify({
+              type: 'audio_chunk',
+              audio: base64Audio
+            }));
+          };
+          reader.readAsDataURL(event.data);
+        }
       };
-
-      mediaRecorder.start();
+      
+      // Start recording with small timeslices (200ms)
+      mediaRecorderRef.current.start(200);
       setIsRecording(true);
-
-      // Stop recording after 5 seconds
-      setTimeout(() => {
-        mediaRecorder.stop();
-        setIsRecording(false);
-        stream.getTracks().forEach(track => track.stop());
-      }, 5000);
+      setResponse(null); // Clear previous response
+      setTranscription('Listening...'); // Indicate recording started
+      setError(''); // Clear previous errors
     } catch (err) {
       setError('Failed to access microphone: ' + err.message);
+    }
+  };
+
+  const stopRecording = () => {
+    // Stop recording if active
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      
+      // Stop voice activity detection
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      
+      // Stop and release microphone stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      
+      // Reset VAD state
+      silenceStartRef.current = null;
+      
+      // Notify server that recording has stopped
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'recording_stopped'
+        }));
+      }
+      
+      setTranscription('Processing audio...');
     }
   };
 
@@ -342,15 +505,14 @@ export default function TestingPage() {
             <div className="bg-gray-800 rounded-lg p-6">
               <h2 className="text-xl font-semibold text-white mb-4">Audio Testing</h2>
               <button
-                onClick={startRecording}
-                disabled={isRecording}
+                onClick={isRecording ? stopRecording : startRecording}
                 className={`px-4 py-2 rounded-lg ${
                   isRecording
-                    ? 'bg-red-600 text-white'
+                    ? 'bg-red-600 text-white animate-pulse'
                     : 'bg-indigo-600 text-white hover:bg-indigo-700'
                 }`}
               >
-                {isRecording ? 'Recording...' : 'Start Recording'}
+                {isRecording ? 'Stop Recording (or wait for silence)' : 'Start Recording'}
               </button>
 
               <div className="mt-8 space-y-4">

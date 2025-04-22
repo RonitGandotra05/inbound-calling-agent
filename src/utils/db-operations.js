@@ -26,7 +26,7 @@ async function createBooking(bookingData) {
 
     const result = await query(
       `INSERT INTO bookings 
-      (customer_name, phone_number, service_required, date_of_appointment, time, transcript, status, created_at) 
+      (customer_name, phone_number, service_required, date_of_appointment, time, transcript, status, date_of_booking) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) 
       RETURNING *`,
       [
@@ -39,14 +39,6 @@ async function createBooking(bookingData) {
         'scheduled'
       ]
     );
-
-    // Add to conversation history
-    await addToConversationHistory({
-      phoneNumber: bookingData.phoneNumber,
-      customerInput: bookingData.transcript || '',
-      agentResponse: 'Booking created successfully',
-      intent: 'booking'
-    });
 
     return result.rows[0];
   } catch (error) {
@@ -82,7 +74,7 @@ async function registerComplaint(complaintData) {
 
     const result = await query(
       `INSERT INTO complaints 
-      (customer_name, phone_number, service, summary, transcript, status, created_at) 
+      (customer_name, phone_number, service, summary, transcript, status, date_of_complaint) 
       VALUES ($1, $2, $3, $4, $5, $6, NOW()) 
       RETURNING *`,
       [
@@ -94,14 +86,6 @@ async function registerComplaint(complaintData) {
         'open'
       ]
     );
-
-    // Add to conversation history
-    await addToConversationHistory({
-      phoneNumber: complaintData.phoneNumber,
-      customerInput: complaintData.transcript || '',
-      agentResponse: 'Complaint registered successfully',
-      intent: 'complaint'
-    });
 
     return result.rows[0];
   } catch (error) {
@@ -138,7 +122,7 @@ async function createInquiry(inquiryData) {
 
     const result = await query(
       `INSERT INTO inquiry 
-      (customer_name, phone_number, service_name, transcript, created_at) 
+      (customer_name, phone_number, service_name, transcript, date_of_enquiry) 
       VALUES ($1, $2, $3, $4, NOW()) 
       RETURNING *`,
       [
@@ -148,14 +132,6 @@ async function createInquiry(inquiryData) {
         inquiryData.transcript || ''
       ]
     );
-
-    // Add to conversation history
-    await addToConversationHistory({
-      phoneNumber: inquiryData.phoneNumber,
-      customerInput: inquiryData.transcript || '',
-      agentResponse: 'Inquiry recorded successfully',
-      intent: 'inquiry'
-    });
 
     return result.rows[0];
   } catch (error) {
@@ -203,14 +179,6 @@ async function recordFeedback(feedbackData) {
       ]
     );
 
-    // Add to conversation history
-    await addToConversationHistory({
-      phoneNumber: feedbackData.phoneNumber,
-      customerInput: feedbackData.transcript || '',
-      agentResponse: 'Feedback recorded successfully',
-      intent: 'feedback'
-    });
-
     return result.rows[0];
   } catch (error) {
     logger.error('Error recording feedback', { error: error.message, data: feedbackData });
@@ -219,71 +187,55 @@ async function recordFeedback(feedbackData) {
 }
 
 /**
- * Add an entry to the conversation history
- * @param {Object} conversationData - Conversation data
+ * Save a conversation to the conversations table
+ * @param {Object} conversationData - Conversation information
+ * @param {string} conversationData.customerName - Name of the customer
  * @param {string} conversationData.phoneNumber - Customer's phone number
- * @param {string} conversationData.customerInput - What the customer said
- * @param {string} conversationData.agentResponse - What the agent responded with
- * @param {string} [conversationData.intent] - Detected intent (booking, complaint, etc.)
- * @returns {Promise<Object>} The recorded conversation entry
+ * @param {string} conversationData.queryType - Type of query (booking, complaint, feedback, inquiry)
+ * @param {number} conversationData.sourceId - ID of the source record (booking_id, complaint_id, etc.)
+ * @param {string} conversationData.transcript - Full conversation transcript
+ * @param {string} conversationData.service - Service related to the conversation
+ * @param {Date} conversationData.interactionDate - Date of the interaction
+ * @param {string} conversationData.time - Time of the interaction
+ * @param {string} conversationData.summary - Summary of the conversation
+ * @returns {Promise<Object>} The saved conversation
  */
-async function addToConversationHistory(conversationData) {
+async function saveConversation(conversationData) {
   try {
-    if (!conversationData.phoneNumber) {
-      throw new Error('Phone number is required for conversation history');
-    }
+    // Validate required fields
+    const requiredFields = ['customerName', 'phoneNumber', 'queryType', 'sourceId', 'service', 'interactionDate'];
+    requiredFields.forEach(field => {
+      if (!conversationData[field]) {
+        throw new Error(`Missing required conversation field: ${field}`);
+      }
+    });
 
-    // This function should not interrupt the main flow, so we log errors but don't throw
+    logger.info('Saving conversation', { 
+      customer: conversationData.customerName,
+      type: conversationData.queryType
+    });
+
     const result = await query(
       `INSERT INTO conversations 
-      (phone_number, customer_input, agent_response, intent, timestamp) 
-      VALUES ($1, $2, $3, $4, NOW()) 
+      (customer_name, phone_number, query_type, source_id, transcript, service, interaction_date, time, summary) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
       RETURNING *`,
       [
+        conversationData.customerName,
         conversationData.phoneNumber,
-        conversationData.customerInput || '',
-        conversationData.agentResponse || '',
-        conversationData.intent || 'general'
+        conversationData.queryType,
+        conversationData.sourceId,
+        conversationData.transcript || '',
+        conversationData.service,
+        conversationData.interactionDate,
+        conversationData.time || null,
+        conversationData.summary || ''
       ]
     );
 
     return result.rows[0];
   } catch (error) {
-    logger.error('Error adding to conversation history', { 
-      error: error.message, 
-      phoneNumber: conversationData.phoneNumber 
-    });
-    // Return null instead of throwing to prevent disrupting the main flow
-    return null;
-  }
-}
-
-/**
- * Get conversation history for a specific phone number
- * @param {string} phoneNumber - Customer's phone number
- * @param {number} [limit=5] - Maximum number of records to retrieve
- * @returns {Promise<Array>} Array of conversation records
- */
-async function getConversationHistory(phoneNumber, limit = 5) {
-  try {
-    if (!phoneNumber) {
-      throw new Error('Phone number is required to retrieve conversation history');
-    }
-
-    const result = await query(
-      `SELECT * FROM conversations 
-      WHERE phone_number = $1 
-      ORDER BY timestamp DESC 
-      LIMIT $2`,
-      [phoneNumber, limit]
-    );
-
-    return result.rows;
-  } catch (error) {
-    logger.error('Error retrieving conversation history', { 
-      error: error.message, 
-      phoneNumber 
-    });
+    logger.error('Error saving conversation', { error: error.message, data: conversationData });
     throw error;
   }
 }
@@ -293,6 +245,5 @@ module.exports = {
   registerComplaint,
   createInquiry,
   recordFeedback,
-  addToConversationHistory,
-  getConversationHistory
+  saveConversation
 }; 

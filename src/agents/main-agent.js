@@ -66,7 +66,10 @@ async function processInboundCall(audioBuffer, phoneNumber, conversationHistory 
       refinedQuery: result.refinedQuery,
       category: result.category,
       response: result.response,
+      customerName: result.customerName,
+      service: result.service,
       audioResponse,
+      dbActionResult: result.dbActionResult,
       errors: result.errors
     };
   } catch (error) {
@@ -81,7 +84,10 @@ async function processInboundCall(audioBuffer, phoneNumber, conversationHistory 
       refinedQuery: '',
       category: '',
       response: fallbackResponse,
+      customerName: '',
+      service: '',
       audioResponse: fallbackAudio,
+      dbActionResult: null,
       errors: [error.message]
     };
   }

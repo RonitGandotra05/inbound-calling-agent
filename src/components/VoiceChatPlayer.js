@@ -12,9 +12,21 @@ const VoiceChatPlayer = ({ conversationId = null, onConversationIdChange = () =>
   const [error, setError] = useState(null);
   const [useStreaming, setUseStreaming] = useState(true);
   
+  // Audio refs
   const audioRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const socketRef = useRef(null);
+  const vadTimeoutRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  
+  // VAD settings
+  const SILENCE_THRESHOLD = -50; // dB
+  const SILENCE_DURATION = 1500; // ms to consider "finished talking"
+  const silenceStartRef = useRef(null);
   
   // Streaming audio playback
   const mediaSourceRef = useRef(null);
@@ -23,11 +35,13 @@ const VoiceChatPlayer = ({ conversationId = null, onConversationIdChange = () =>
   const isPlayingRef = useRef(false);
   
   useEffect(() => {
+    // Set up WebSocket connection
+    setupWebSocket();
+    
     // Clean up on unmount
     return () => {
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-      }
+      stopRecording();
+      closeWebSocket();
       
       if (mediaSourceRef.current) {
         try {
@@ -39,8 +53,242 @@ const VoiceChatPlayer = ({ conversationId = null, onConversationIdChange = () =>
           console.error('Error cleaning up MediaSource:', error);
         }
       }
+      
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
     };
   }, []);
+  
+  const setupWebSocket = () => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      return; // Already connected
+    }
+    
+    // Create WebSocket connection
+    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const host = window.location.hostname; // Only get the hostname without port
+    const wsPort = 8000; // WebSocket server port
+    socketRef.current = new WebSocket(`${protocol}${host}:${wsPort}/api/websocket`);
+    
+    socketRef.current.onopen = () => {
+      console.log('WebSocket connection established');
+      
+      // Send initial metadata
+      socketRef.current.send(JSON.stringify({
+        type: 'init',
+        conversationId: conversationId || `conv-${Date.now()}`,
+        phoneNumber: '+11234567890' // Mock phone number for testing
+      }));
+    };
+    
+    socketRef.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'init_ack') {
+          // Connection initialized
+          if (data.conversationId && data.conversationId !== conversationId) {
+            onConversationIdChange(data.conversationId);
+          }
+        } else if (data.type === 'transcription') {
+          setTranscript(data.text);
+        } else if (data.type === 'response') {
+          setResponse(data.text);
+          setIsProcessing(false);
+        } else if (data.type === 'audio') {
+          // Handle audio response
+          try {
+            const audioData = data.data;
+            const audioBlob = new Blob(
+              [Uint8Array.from(atob(audioData), c => c.charCodeAt(0))], 
+              { type: 'audio/mp3' }
+            );
+            const url = URL.createObjectURL(audioBlob);
+            
+            // Play the audio
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play();
+          } catch (audioError) {
+            console.error('Error playing audio response:', audioError);
+          }
+        } else if (data.type === 'error') {
+          setError(data.error);
+          setIsProcessing(false);
+        }
+      } catch (parseError) {
+        console.error('Error parsing WebSocket message:', parseError);
+      }
+    };
+    
+    socketRef.current.onerror = (wsError) => {
+      console.error('WebSocket error event:', wsError);
+      setError('Connection error. Please check console and server logs.');
+      setIsProcessing(false);
+    };
+    
+    socketRef.current.onclose = () => {
+      console.log('WebSocket connection closed');
+      // Try to reconnect after a delay
+      setTimeout(setupWebSocket, 3000);
+    };
+  };
+  
+  const closeWebSocket = () => {
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+  };
+  
+  const setupVAD = async (stream) => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // Create analyzer for voice activity detection
+    analyserRef.current = audioContextRef.current.createAnalyser();
+    analyserRef.current.fftSize = 256;
+    
+    // Connect microphone to analyzer
+    const source = audioContextRef.current.createMediaStreamSource(stream);
+    source.connect(analyserRef.current);
+    
+    // Start monitoring voice activity
+    checkVoiceActivity();
+  };
+  
+  const checkVoiceActivity = () => {
+    if (!analyserRef.current) return;
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(dataArray);
+    
+    // Calculate average volume
+    const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+    const dB = 20 * Math.log10(average / 255);
+    
+    // Check for silence
+    if (dB < SILENCE_THRESHOLD) {
+      if (!silenceStartRef.current) {
+        silenceStartRef.current = Date.now();
+      } else if (Date.now() - silenceStartRef.current > SILENCE_DURATION && isRecording) {
+        // User stopped talking
+        stopRecording();
+        return; // Stop monitoring after stopping recording
+      }
+    } else {
+      silenceStartRef.current = null;
+    }
+    
+    // Continue monitoring
+    animationFrameRef.current = requestAnimationFrame(checkVoiceActivity);
+  };
+  
+  const startRecording = async () => {
+    try {
+      setError(null);
+      
+      // Check if WebSocket is connected, if not reconnect
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        setupWebSocket();
+        // Wait for connection to establish
+        await new Promise((resolve) => {
+          const checkConnection = () => {
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+              resolve();
+            } else {
+              setTimeout(checkConnection, 100);
+            }
+          };
+          checkConnection();
+        });
+      }
+      
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      // Setup VAD
+      setupVAD(stream);
+      
+      // Create media recorder
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 16000
+      });
+      audioChunksRef.current = [];
+      
+      // Handle data available event - send chunks as they become available
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          // Convert to base64 and send
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64Audio = reader.result;
+            socketRef.current.send(JSON.stringify({
+              type: 'audio_chunk',
+              audio: base64Audio
+            }));
+          };
+          reader.readAsDataURL(event.data);
+          
+          // Also add to local chunks for reference
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      // Start recording with small timeslices (200ms)
+      mediaRecorderRef.current.start(200);
+      setIsRecording(true);
+      setIsProcessing(true);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      setError('Could not access microphone: ' + error.message);
+    }
+  };
+  
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      
+      // Stop voice activity detection
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      
+      // Stop and release microphone stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      
+      // Reset VAD state
+      silenceStartRef.current = null;
+      
+      // Notify server that recording has stopped
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'recording_stopped'
+        }));
+      }
+    }
+  };
+  
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
   
   const setupStreamingAudio = () => {
     if (!window.MediaSource) {
@@ -122,464 +370,78 @@ const VoiceChatPlayer = ({ conversationId = null, onConversationIdChange = () =>
     }
   };
   
-  const startRecording = async () => {
-    try {
-      setError(null);
-      
-      // Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Create media recorder
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      
-      // Handle data available event
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      // Handle recording stop event
-      mediaRecorderRef.current.onstop = () => {
-        // Process the recorded audio
-        processAudio();
-      };
-      
-      // Start recording
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      setError('Could not access microphone: ' + error.message);
-    }
-  };
-  
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-  
-  const processAudio = async () => {
-    if (audioChunksRef.current.length === 0) {
-      setError('No audio recorded');
-      return;
-    }
-    
-    setIsProcessing(true);
-    
-    try {
-      // Convert audio chunks to blob
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-      
-      // Convert to base64
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      
-      reader.onloadend = async () => {
-        const base64Audio = reader.result;
-        
-        // Prepare request payload
-        const payload = {
-          audio_data: base64Audio,
-          phone_number: '+11234567890', // Mock phone number for testing
-          audio_enabled: true,
-          streaming: useStreaming,
-          conversation_id: conversationId
-        };
-        
-        // Set up streaming or traditional response handling
-        if (useStreaming) {
-          await handleStreamingRequest(payload);
-        } else {
-          await handleTraditionalRequest(payload);
-        }
-      };
-    } catch (error) {
-      console.error('Error processing audio:', error);
-      setError('Failed to process audio: ' + error.message);
-      setIsProcessing(false);
-    }
-  };
-  
-  const handleStreamingRequest = async (payload) => {
-    let response; // Define response variable outside the try block
-    try {
-      // Set up streaming audio playback
-      if (!setupStreamingAudio()) {
-        // Fall back to traditional request if streaming setup fails
-        console.warn('Streaming setup failed, falling back to traditional request.');
-        await handleTraditionalRequest(payload);
-        return;
-      }
-      
-      // Reset play state
-      isPlayingRef.current = false;
-      
-      // Make fetch request with streaming response
-      response = await fetch('/api/voice-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer mock-token' // You'd use a real token here
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      // CRITICAL CHECK: Verify initial response status and content type
-      if (!response.ok) {
-        // Try to get error message from body if possible, otherwise use status text
-        let errorMsg = `Server error: ${response.status} ${response.statusText}`;
-        try {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorMsg;
-        } catch (e) { 
-          // If body isn't JSON, just use the status text
-          console.warn('Failed to parse error response as JSON.');
-        }
-        throw new Error(errorMsg);
-      }
-      
-      const contentType = response.headers.get('content-type');
-      // Ensure we are getting an audio stream before proceeding
-      if (!contentType || !contentType.includes('audio/mpeg')) {
-         console.warn(`Expected audio/mpeg stream but received ${contentType}. Falling back.`);
-         // We didn't get the expected audio stream, attempt fallback
-         await handleTraditionalRequest(payload); 
-         return;
-      }
-      
-      // Add timeout to handle potential stalled streams
-      let streamTimeout;
-      const resetStreamTimeout = () => {
-        if (streamTimeout) clearTimeout(streamTimeout);
-        streamTimeout = setTimeout(() => {
-          console.warn('Stream timeout - no data received within timeout period');
-          setError('Stream timed out. Falling back to traditional response...');
-          // Fall back to traditional request if stream times out
-          handleTraditionalRequest(payload);
-        }, 10000); // 10 second timeout
-      };
-      
-      resetStreamTimeout();
-      
-      // Handle the streaming response body
-      const reader = response.body.getReader();
-      let receivedAnyData = false;
-      
-      // Process the stream chunks
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) {
-            // End of stream
-            if (mediaSourceRef.current && mediaSourceRef.current.readyState === 'open') {
-              try {
-                // Wait a bit before ending to ensure all buffers are processed
-                setTimeout(() => {
-                  try {
-                    if (mediaSourceRef.current && mediaSourceRef.current.readyState === 'open') {
-                      mediaSourceRef.current.endOfStream();
-                    }
-                  } catch (err) {
-                    console.warn('Error ending media stream:', err);
-                  }
-                }, 500);
-              } catch (err) {
-                console.warn('Error ending media stream:', err);
-              }
-            }
-            break;
-          }
-          
-          // Reset timeout since we received data
-          resetStreamTimeout();
-          receivedAnyData = true;
-          
-          // Queue the audio chunk for playback
-          queueAudioBuffer(value);
-        }
-      } catch (streamError) {
-        console.error('Error reading stream:', streamError);
-        // If we've already received some data, just let it play
-        // If not, fall back to traditional request
-        if (!receivedAnyData) {
-          setError('Error streaming audio. Falling back to traditional response...');
-          handleTraditionalRequest(payload);
-          return;
-        }
-      } finally {
-        if (streamTimeout) clearTimeout(streamTimeout);
-      }
-      
-      // Update conversation ID if provided by headers (check response variable)
-      if (response && response.headers.get('X-Conversation-ID')) {
-        const newConversationId = response.headers.get('X-Conversation-ID');
-        onConversationIdChange(newConversationId);
-      }
-      
-      setIsProcessing(false);
-    } catch (error) {
-      console.error('Error in handleStreamingRequest:', error);
-      setError('Streaming error: ' + error.message);
-      setIsProcessing(false);
-      
-      // Try fallback to traditional request if streaming fails
-      if (useStreaming) {
-        console.warn('Attempting fallback to traditional request due to streaming error.');
-        setUseStreaming(false);
-        await handleTraditionalRequest(payload); // Pass the original payload
-      }
-    }
-  };
-  
-  const handleTraditionalRequest = async (payload) => {
-    try {
-      setIsProcessing(true);
-      
-      // Make regular fetch request
-      const response = await fetch('/api/voice-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer mock-token' // You'd use a real token here
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (!response.ok) {
-        const contentType = response.headers.get('content-type');
-        
-        // Try to get a meaningful error message
-        let errorMsg = `Server error: ${response.status} ${response.statusText}`;
-        
-        if (contentType && contentType.includes('application/json')) {
-          try {
-            // Get the response as text first
-            const responseText = await response.text();
-            
-            // Check if we actually have content
-            if (!responseText || responseText.trim() === '') {
-              throw new Error('Empty response received');
-            }
-            
-            // Try to parse it as JSON
-            try {
-              const errorData = JSON.parse(responseText);
-              errorMsg = errorData.error || errorMsg;
-            } catch (parseError) {
-              console.warn('Failed to parse error response as JSON:', parseError);
-              errorMsg = `Parse error: ${parseError.message}. Response: ${responseText.slice(0, 100)}`;
-            }
-          } catch (e) {
-            console.warn('Failed to read error response:', e);
-          }
-        } else {
-          // Not JSON, try to get error message as text
-          try {
-            const errorText = await response.text();
-            // Check if it's an HTML response
-            if (errorText.trim().startsWith('<!DOCTYPE') || errorText.trim().startsWith('<html')) {
-              console.error('Received HTML error page instead of JSON');
-              errorMsg = 'Received HTML response from server. This likely indicates a server-side error.';
-            } else if (errorText.length < 100) {
-              // Only use the error text if it's reasonably short
-              errorMsg += `: ${errorText}`;
-            }
-          } catch (textError) {
-            console.warn('Failed to read error response as text:', textError);
-          }
-        }
-        
-        throw new Error(errorMsg);
-      }
-      
-      // Check content type after successful request
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        console.error(`Expected JSON but got: ${contentType}`);
-        throw new Error(`Unexpected content type: ${contentType || 'unknown'}`);
-      }
-      
-      // Parse response as JSON with safety checks
-      let responseData;
-      try {
-        // Get the response as text first
-        const responseText = await response.text();
-        
-        // Check if the response is empty
-        if (!responseText || responseText.trim() === '') {
-          throw new Error('Empty response received from server');
-        }
-        
-        // Log the response for debugging
-        console.log('Response text received (first 200 chars):', responseText.slice(0, 200));
-        
-        // Verify it's not an HTML response before parsing
-        if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-          throw new Error('Received HTML instead of JSON data');
-        }
-        
-        try {
-          responseData = JSON.parse(responseText);
-        } catch (jsonError) {
-          console.error('JSON parsing error:', jsonError);
-          // In case of JSON parse error, try to create a minimal valid response
-          if (responseText.includes('response') && responseText.includes(':')) {
-            try {
-              // Try to extract just the response text using regex
-              const match = responseText.match(/"response"\s*:\s*"([^"]+)"/);
-              if (match && match[1]) {
-                console.log('Extracted response text from malformed JSON:', match[1]);
-                responseData = {
-                  success: true,
-                  response: match[1],
-                  transcription: { text: payload.transcribedText || '' }
-                };
-              } else {
-                throw new Error('Could not extract response from malformed JSON');
-              }
-            } catch (extractError) {
-              throw new Error(`Failed to parse response as JSON: ${jsonError.message}\nResponse starts with: ${responseText.slice(0, 150)}`);
-            }
-          } else {
-            throw new Error(`Failed to parse response as JSON: ${jsonError.message}\nResponse starts with: ${responseText.slice(0, 150)}`);
-          }
-        }
-      } catch (textError) {
-        console.error('Error reading response text:', textError);
-        throw new Error(`Failed to read response: ${textError.message}`);
-      }
-      
-      console.log('Traditional response received:', responseData);
-      
-      // Check for and handle any errors in the response data
-      if (!responseData.success && responseData.error) {
-        setError(responseData.error);
-        setIsProcessing(false);
-        return;
-      }
-      
-      // Extract response text
-      if (responseData.response) {
-        setResponse(responseData.response);
-      }
-      
-      // Get and play audio if available
-      if (responseData.audio_url) {
-        console.log('Playing audio from URL:', responseData.audio_url);
-        
-        try {
-          // Set up audio playback
-          if (!audioRef.current) {
-            audioRef.current = new Audio();
-          }
-          
-          audioRef.current.src = responseData.audio_url;
-          
-          // Set up event listeners
-          audioRef.current.onplay = () => {
-            console.log('Audio playback started');
-            isPlayingRef.current = true;
-          };
-          
-          audioRef.current.onended = () => {
-            console.log('Audio playback ended');
-            isPlayingRef.current = false;
-          };
-          
-          audioRef.current.onerror = (e) => {
-            console.error('Audio playback error:', e);
-            setError(`Error playing audio: ${e.target.error?.message || 'unknown error'}`);
-            isPlayingRef.current = false;
-          };
-          
-          // Start playback
-          const playPromise = audioRef.current.play();
-          
-          if (playPromise !== undefined) {
-            playPromise.catch(e => {
-              console.error('Error during play():', e);
-              setError(`Playback failed: ${e.message}`);
-              isPlayingRef.current = false;
-            });
-          }
-        } catch (audioError) {
-          console.error('Error setting up audio:', audioError);
-          setError(`Audio setup error: ${audioError.message}`);
-        }
-      } else {
-        console.log('No audio URL provided in response');
-      }
-      
-      // Update conversation ID if provided
-      if (responseData.conversation_id) {
-        onConversationIdChange(responseData.conversation_id);
-      }
-      
-      setIsProcessing(false);
-    } catch (error) {
-      console.error('Error in handleTraditionalRequest:', error);
-      setError(error.message || 'An error occurred processing your request');
-      setIsProcessing(false);
-    }
-  };
-  
   return (
-    <div className="voice-chat-player">
-      <h2>Voice Chat</h2>
+    <div className="voice-chat-container p-4 bg-gray-900 rounded-lg shadow-lg">
+      <div className="mb-4">
+        <h2 className="text-xl font-semibold text-white mb-2">Voice Assistant</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          {isRecording 
+            ? "I'm listening... (will automatically stop when you pause speaking)" 
+            : "Click the microphone button and start speaking"}
+        </p>
+      </div>
       
       {error && (
-        <div className="error-message">
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-500/50 rounded-md text-red-300 text-sm">
           {error}
         </div>
       )}
       
-      <div className="controls">
-        <button 
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isProcessing}
+      <div className="flex justify-center mb-6">
+        <button
+          onClick={toggleRecording}
+          className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${
+            isRecording 
+              ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
+              : 'bg-blue-600 hover:bg-blue-700'
+          }`}
+          disabled={isProcessing && !isRecording}
         >
-          {isRecording ? 'Stop Recording' : 'Start Recording'}
+          <span className="sr-only">{isRecording ? 'Stop Recording' : 'Start Recording'}</span>
+          <svg 
+            xmlns="http://www.w3.org/2000/svg" 
+            fill="none" 
+            viewBox="0 0 24 24" 
+            stroke="currentColor" 
+            className="w-8 h-8 text-white"
+          >
+            {isRecording ? (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            )}
+          </svg>
         </button>
-        
-        <label>
-          <input 
-            type="checkbox" 
-            checked={useStreaming} 
-            onChange={(e) => setUseStreaming(e.target.checked)} 
-            disabled={isRecording || isProcessing}
-          />
-          Use Streaming (Real-time Voice)
-        </label>
       </div>
       
-      {transcript && (
-        <div className="transcript">
-          <h3>You said:</h3>
-          <p>{transcript}</p>
-        </div>
-      )}
-      
-      {response && (
-        <div className="response">
-          <h3>Agent Response:</h3>
-          <p>{response}</p>
-        </div>
-      )}
-      
-      <div className="audio-player">
-        <audio ref={audioRef} controls />
-      </div>
-      
-      {isProcessing && (
-        <div className="loading">
+      {isProcessing && !isRecording && (
+        <div className="text-center mb-4 text-blue-400">
+          <div className="inline-block animate-spin mr-2">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+          </div>
           Processing...
         </div>
       )}
+      
+      <div className="space-y-4">
+        {transcript && (
+          <div className="p-3 bg-gray-800 rounded-lg">
+            <h3 className="text-sm font-medium text-gray-400 mb-1">You said:</h3>
+            <p className="text-white">{transcript}</p>
+          </div>
+        )}
+        
+        {response && (
+          <div className="p-3 bg-indigo-900/30 border border-indigo-500/30 rounded-lg">
+            <h3 className="text-sm font-medium text-indigo-400 mb-1">Assistant:</h3>
+            <p className="text-white">{response}</p>
+          </div>
+        )}
+      </div>
+      
+      <audio ref={audioRef} className="hidden" />
     </div>
   );
 };

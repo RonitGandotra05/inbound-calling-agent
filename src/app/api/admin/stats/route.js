@@ -19,11 +19,6 @@ export async function GET(request) {
     const client = await pool.connect();
     
     try {
-      // Get total calls (conversations)
-      const totalCallsQuery = 'SELECT COUNT(*) FROM conversations';
-      const totalCallsResult = await client.query(totalCallsQuery);
-      const totalCalls = parseInt(totalCallsResult.rows[0].count);
-      
       // Get total complaints
       const complaintsQuery = 'SELECT COUNT(*) FROM complaints';
       const complaintsResult = await client.query(complaintsQuery);
@@ -34,8 +29,8 @@ export async function GET(request) {
       const bookingsResult = await client.query(bookingsQuery);
       const bookings = parseInt(bookingsResult.rows[0].count);
       
-      // Get inquiries (estimate based on conversation type or query_type)
-      const inquiriesQuery = "SELECT COUNT(*) FROM conversations WHERE query_type = 'inquiry'";
+      // Get inquiries directly from inquiry table
+      const inquiriesQuery = 'SELECT COUNT(*) FROM inquiry';
       const inquiriesResult = await client.query(inquiriesQuery);
       const inquiries = parseInt(inquiriesResult.rows[0].count);
       
@@ -43,6 +38,9 @@ export async function GET(request) {
       const feedbackQuery = 'SELECT COUNT(*) FROM feedback';
       const feedbackResult = await client.query(feedbackQuery);
       const feedback = parseInt(feedbackResult.rows[0].count);
+      
+      // Calculate total interactions (sum of all types)
+      const totalCalls = complaints + bookings + inquiries + feedback;
       
       // Compile stats
       const stats = {
