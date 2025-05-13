@@ -1,0 +1,112 @@
+// prisma/schema.prisma — *do NOT run migrate*
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id             String        @id @default(uuid())
+  email          String        @unique
+  hashedPassword String        @map("hashed_password")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  isAdmin        Boolean       @default(false) @map("is_admin")
+  assistants     VapiAssistant[]
+  phoneNumbers   PhoneNumber[]
+  callLogs       CallLog[]
+  loginHistory   LoginHistory[]
+
+  @@map("users")
+}
+
+model LoginHistory {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  timestamp DateTime @default(now())
+  ipAddress String?  @map("ip_address")
+
+  @@map("login_history")
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model PhoneNumber {
+  id           String   @id @default(uuid())
+  ownerId      String?  @map("owner_id")
+  owner        User?    @relation(fields: [ownerId], references: [id])
+  vapiId       String   @unique @map("vapi_id")
+  phoneNumber  String?  @map("phone_number")
+  isActive     Boolean  @default(true) @map("is_active")
+  isDeleted    Boolean  @default(false) @map("is_deleted")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  assistants   VapiAssistant[]
+
+  @@map("phone_numbers")
+}
+
+model VapiAssistant {
+  id           String   @id @default(uuid())
+  ownerId      String?  @map("owner_id")
+  owner        User?    @relation(fields: [ownerId], references: [id])
+  phoneNumberId String? @map("phone_number_id")
+  phoneNumber  PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
+  vapiId       String   @unique @map("vapi_id")
+  name         String
+  systemPrompt String?  @map("system_prompt")
+  isActive     Boolean  @default(true) @map("is_active")
+  isDeleted    Boolean  @default(false) @map("is_deleted")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  slots        Slot[]
+  bookings     Booking[]
+  callLogs     CallLog[]
+
+  @@map("vapi_assistants")
+}
+
+model Slot {
+  id          String   @id @default(uuid())
+  assistantId String   @map("assistant_id")
+  assistant   VapiAssistant @relation(fields: [assistantId], references: [id])
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  isBooked    Boolean  @default(false) @map("is_booked")
+  booking     Booking?
+
+  @@map("slots")
+}
+
+model Booking {
+  id           String   @id @default(uuid())
+  assistantId  String   @map("assistant_id")
+  assistant    VapiAssistant @relation(fields: [assistantId], references: [id])
+  slotId       String   @unique @map("slot_id")
+  slot         Slot     @relation(fields: [slotId], references: [id])
+  patientName  String   @map("patient_name")
+  phoneNumber  String   @map("phone_number")
+  symptoms     String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("bookings")
+}
+
+model CallLog {
+  id          String   @id @default(uuid())
+  assistantId String   @map("assistant_id")
+  ownerId     String   @map("owner_id")
+  assistant   VapiAssistant @relation(fields: [assistantId], references: [id])
+  owner       User     @relation(fields: [ownerId], references: [id])
+  fromNumber  String   @map("from_number")
+  toNumber    String   @map("to_number")
+  transcript  Json
+  summary     String?
+  startedAt   DateTime @map("started_at")
+  endedAt     DateTime? @map("ended_at")
+
+  @@map("call_logs")
+} 
