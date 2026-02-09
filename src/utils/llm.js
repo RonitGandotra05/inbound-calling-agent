@@ -21,9 +21,9 @@ async function cerebrasChat(messages, options = {}) {
   try {
     const stream = await cerebras.chat.completions.create({
       messages: messages,
-      model: options.model || 'llama-3.3-70b', // Default model from your example
-      stream: true, // SDK seems oriented towards streaming
-      max_completion_tokens: options.max_tokens || options.maxTokens || 2048, // Allow different naming conventions
+      model: options.model || 'llama-3.3-70b',
+      stream: true,
+      max_completion_tokens: options.max_tokens || options.maxTokens || 2048,
       temperature: options.temperature || 0.2,
       top_p: options.top_p || 1
     });
@@ -32,9 +32,13 @@ async function cerebrasChat(messages, options = {}) {
     for await (const chunk of stream) {
       fullResponse += chunk.choices[0]?.delta?.content || '';
     }
-    
+
     console.log('Cerebras chat completion successful.');
-    return fullResponse.trim();
+
+    // Return consistent format expected by agents
+    return {
+      choices: [{ text: fullResponse.trim() }]
+    };
 
   } catch (error) {
     console.error('Error calling Cerebras SDK:', error);
