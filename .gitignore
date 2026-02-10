@@ -1,34 +1,43 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# Dependencies
-/node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
+# Node modules (global catch-all)
+node_modules/
 
-# Testing
-/coverage
+# ── Frontend (Next.js) ───────────────────────────────────────────────
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/.yarn/install-state.gz
+frontend/coverage/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.eslintcache
+frontend/.stylelintcache
 
-# Next.js build outputs
-/.next/
-/out/
+# ── Backend (Python) ─────────────────────────────────────────────────
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.pytest_cache/
+backend/venv/
+backend/.venv/
+backend/*.egg-info/
 
-# Production build artifacts
-/build
+# ── Shared ───────────────────────────────────────────────────────────
 
-# Static analysis cache
-/.eslintcache
-/.stylelintcache
-
-# Temporary files and logs
+# Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# System files
 .DS_Store
+._*
 *.pem
 
-# Editor directories and files
+# Editor directories
 .idea
 .vscode/*
 !.vscode/settings.json
@@ -42,11 +51,7 @@ yarn-error.log*
 .env*.local
 .env.*.local
 !.env.example
-!.env.development.local
-!.env.production.local
 
-# Turborepo cache (if using)
+# Turborepo cache
 .turbo
 
-# macOS file system artifacts
-._*
