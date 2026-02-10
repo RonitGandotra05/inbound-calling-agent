@@ -35,8 +35,9 @@ async def health():
     return {"status": "healthy", "service": settings.app_name}
 
 
-# Import and register routers (will be added in Phase 5)
-# from app.api import companies, knowledge, agent
-# app.include_router(companies.router, prefix="/api/companies", tags=["companies"])
-# app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
-# app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+# Register API routers
+from app.api import companies, knowledge, agent
+
+app.include_router(companies.router, prefix="/api/companies", tags=["companies"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
