@@ -12,6 +12,7 @@ from passlib.hash import bcrypt
 
 from app.config.database import get_db
 from app.models.models import Company, CompanyService, ApiKey
+from app.utils.company_config import invalidate_cache
 from app.models.schemas import (
     CompanyCreate,
     CompanyUpdate,
@@ -135,6 +136,7 @@ async def update_company(
         setattr(company, field, value)
 
     await db.flush()
+    invalidate_cache(str(company_id))
     return {"company": CompanyResponse.model_validate(company)}
 
 
@@ -148,4 +150,5 @@ async def delete_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
 
     company.is_active = False
     await db.flush()
+    invalidate_cache(str(company_id))
     return {"message": "Company deactivated", "id": str(company.id)}

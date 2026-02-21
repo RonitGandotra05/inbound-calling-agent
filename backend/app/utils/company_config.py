@@ -2,20 +2,32 @@
 Company config helper – builds the context dict that agents need.
 """
 
+import time
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.models import Company
 
-# Simple in-memory cache
-_cache: dict[str, dict] = {}
+logger = logging.getLogger(__name__)
+
+# TTL-based cache: {company_id: (data, timestamp)}
+_cache: dict[str, tuple[dict, float]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
 async def get_company_context(company_id: str, db: AsyncSession) -> dict:
-    """Build a company context dict for agents, with caching."""
-    if company_id in _cache:
-        return _cache[company_id]
+    """Build a company context dict for agents, with TTL-based caching."""
+    now = time.monotonic()
+
+    cached = _cache.get(company_id)
+    if cached is not None:
+        data, ts = cached
+        if now - ts < _CACHE_TTL_SECONDS:
+            return data
+        else:
+            logger.debug("Cache expired for company %s", company_id)
 
     result = await db.execute(
         select(Company)
@@ -47,13 +59,18 @@ async def get_company_context(company_id: str, db: AsyncSession) -> dict:
         "timezone": company.timezone,
     }
 
-    _cache[company_id] = ctx
+    _cache[company_id] = (ctx, now)
+    logger.debug("Cached context for company %s", company_id)
     return ctx
 
 
 def invalidate_cache(company_id: str | None = None):
     """Clear cached company context."""
     if company_id:
-        _cache.pop(company_id, None)
+        removed = _cache.pop(company_id, None)
+        if removed:
+            logger.info("Invalidated cache for company %s", company_id)
     else:
         _cache.clear()
+        logger.info("Invalidated all company caches")
+
