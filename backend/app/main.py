@@ -79,10 +79,50 @@ app.add_middleware(
 )
 
 
+import time as _time
+
+_STARTED_AT = _time.monotonic()
+
+
 @app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": settings.app_name}
+async def health(detailed: bool = False):
+    """Health check endpoint.
+
+    Returns basic status by default.
+    Pass ?detailed=true for database and service connectivity checks.
+    """
+    uptime_seconds = round(_time.monotonic() - _STARTED_AT)
+
+    result = {
+        "status": "healthy",
+        "service": settings.app_name,
+        "version": "2.0.0",
+        "uptime_seconds": uptime_seconds,
+    }
+
+    if detailed:
+        # Check database connectivity
+        try:
+            from app.config.database import async_session
+            from sqlalchemy import text
+
+            async with async_session() as session:
+                await session.execute(text("SELECT 1"))
+            result["database"] = "connected"
+        except Exception as db_err:
+            result["database"] = f"error: {db_err}"
+            result["status"] = "degraded"
+
+        # Check Pinecone availability
+        try:
+            from app.utils.embeddings import _get_pinecone_index
+
+            idx = _get_pinecone_index()
+            result["pinecone"] = "connected" if idx else "not configured"
+        except Exception as pc_err:
+            result["pinecone"] = f"error: {pc_err}"
+
+    return result
 
 
 # Register API routers
@@ -91,4 +131,5 @@ from app.api import companies, knowledge, agent
 app.include_router(companies.router, prefix="/api/companies", tags=["companies"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+
 
