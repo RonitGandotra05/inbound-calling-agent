@@ -1,9 +1,7 @@
 /**
- * Safe client-side environment variables
- * Only expose non-sensitive variables to the client
+ * Safe client-side environment variables.
+ * Only expose non-sensitive values to the browser.
  */
 export const clientEnv = {
-  ADMIN_ENABLED: process.env.ADMIN_ENABLED === 'true',
-  ADMIN_EMAIL: process.env.ADMIN_EMAIL,
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
-}; 
+  BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000',
+};
