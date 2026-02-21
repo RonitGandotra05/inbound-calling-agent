@@ -5,8 +5,10 @@ Inbound Calling Agent - FastAPI Backend
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.config.settings import get_settings
 from app.config.logging_config import setup_logging
 
@@ -33,7 +35,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - allow frontend to call backend
+
+# ── Global exception handlers ────────────────────────────────────────
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Return a clean JSON response for malformed requests."""
+    errors = []
+    for err in exc.errors():
+        field = " → ".join(str(loc) for loc in err["loc"])
+        errors.append(f"{field}: {err['msg']}")
+    logger.warning("Validation error on %s %s: %s", request.method, request.url.path, errors)
+    return JSONResponse(
+        status_code=422,
+        content={"error": "Validation error", "detail": errors},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_error_handler(request: Request, exc: Exception):
+    """Catch-all handler so unhandled errors return JSON, not HTML tracebacks."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    detail = str(exc) if settings.debug else "An internal error occurred."
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": detail},
+    )
+
+
+# ── CORS middleware ──────────────────────────────────────────────────
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -59,3 +91,4 @@ from app.api import companies, knowledge, agent
 app.include_router(companies.router, prefix="/api/companies", tags=["companies"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+
