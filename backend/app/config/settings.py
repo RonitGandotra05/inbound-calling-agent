@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
     # Database
-    database_url: str  # Required - Neon PostgreSQL connection string
+    database_url: str = "sqlite+aiosqlite:///./local.db"  # Defaults to local SQLite if not set
 
     # LLM - Cerebras
     cerebras_api_key: str = ""

@@ -24,6 +24,14 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info("Starting %s v%s", settings.app_name, "2.0.0")
+    
+    # Initialize DB (Useful for creating the local SQLite file automatically)
+    from app.config.database import engine, Base
+    from app.models import models # Ensure models are imported
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database schema initialized")
+        
     yield
     logger.info("Shutting down %s", settings.app_name)
 

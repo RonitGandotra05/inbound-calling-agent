@@ -28,14 +28,22 @@ def _get_async_url(url: str) -> str:
 settings = get_settings()
 async_url = _get_async_url(settings.database_url)
 
-engine = create_async_engine(
-    async_url,
-    echo=settings.debug,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    connect_args={"ssl": "require"} if "neon" in async_url else {}
-)
+is_sqlite = async_url.startswith("sqlite")
+
+engine_kwargs = {
+    "echo": settings.debug,
+}
+
+if not is_sqlite:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_pre_ping": True,
+    })
+    if "neon" in async_url:
+        engine_kwargs["connect_args"] = {"ssl": "require"}
+
+engine = create_async_engine(async_url, **engine_kwargs)
 
 async_session = async_sessionmaker(
     engine,
