@@ -45,3 +45,65 @@ async def greeting(twilio_number: str, db: AsyncSession = Depends(get_db)):
     """Get the company greeting for a Twilio number."""
     text = await get_greeting(twilio_number, db)
     return {"greeting": text}
+
+
+import uuid
+import logging
+from fastapi import HTTPException
+from app.models.models import Company
+from app.models.schemas import TryForFreeRequest
+from app.utils.twilio_client import initiate_outbound_call
+from app.utils.embeddings import index_text
+from app.utils.company_config import invalidate_cache
+
+logger = logging.getLogger(__name__)
+
+@router.post("/try-for-free")
+async def try_for_free(body: TryForFreeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    1. Create a temporary company.
+    2. Embed the provided knowledge text into Pinecone mapped to that company.
+    3. Trigger a Twilio outbound call to the provided phone number.
+    """
+    temp_company_id = uuid.uuid4()
+    
+    # Create temporary company record
+    company = Company(
+        id=temp_company_id,
+        name=f"Demo-{temp_company_id.hex[:6]}",
+        slug=f"demo-{temp_company_id.hex[:6]}",
+        phone_number=None, # Only inbound uses this mapping
+        greeting="Hi there! I am your custom OmniVoice Labs agent. How can I help you regarding the policy you provided?",
+        is_active=True
+    )
+    db.add(company)
+    await db.commit()
+    
+    # Ingest text into Pinecone (blocks until complete to ensure agent has data)
+    try:
+        await index_text(
+            company_id=str(temp_company_id),
+            text=body.knowledge_text,
+            metadata={"source": "try-for-free"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to index demo text: {e}")
+        raise HTTPException(status_code=500, detail="Failed to build agent knowledge base.")
+
+    # Invalidate cache just in case
+    invalidate_cache(str(temp_company_id))
+
+    # Initiate Call
+    call_sid = initiate_outbound_call(
+        to_phone=body.phone_number,
+        company_id=str(temp_company_id)
+    )
+
+    if not call_sid:
+        raise HTTPException(status_code=500, detail="Failed to initiate call with Twilio. Verify billing and credentials.")
+
+    return {
+        "status": "success",
+        "company_id": str(temp_company_id),
+        "call_sid": call_sid
+    }

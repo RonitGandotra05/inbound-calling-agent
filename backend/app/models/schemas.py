@@ -181,6 +181,19 @@ class QueryResponse(BaseModel):
     errors: list[str] = []
 
 
+class TryForFreeRequest(BaseModel):
+    """Request to initiate an outbound demo call."""
+    phone_number: str = Field(..., description="E.164 phone number to call")
+    knowledge_text: str = Field(..., min_length=20, max_length=5000)
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        if not _PHONE_RE.match(v):
+            raise ValueError("Phone number must be in E.164 format, e.g. +14155551234")
+        return v
+
+
 # ---- Pagination ----
 
 class PaginatedResponse(BaseModel):
