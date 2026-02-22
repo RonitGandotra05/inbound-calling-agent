@@ -2,86 +2,121 @@ import Link from 'next/link';
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-gray-900 via-black to-gray-800">
-      <div className="container px-5 py-24 mx-auto text-center">
-        {/* Hero Section */}
-        <div className="backdrop-blur-sm bg-black/30 rounded-xl p-10 mb-16 max-w-4xl mx-auto border border-gray-700 shadow-2xl">
-          <h1 className="text-6xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-600">
-            AI-Powered Inbound Calling System
-          </h1>
-          
-          <div className="h-1 w-40 mx-auto my-5 bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-600 rounded"></div>
-          
-          <p className="text-xl text-gray-300 max-w-3xl mx-auto mb-10">
-            An intelligent agent-based system that handles inbound calls using 
-            advanced Speech-to-Text and Text-to-Speech technologies, delivering 
-            seamless human-like interactions.
-          </p>
-          
-          <Link href="/admin/login" className="inline-block py-4 px-8 text-lg font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-indigo-500/25">
-            Admin Dashboard
+    <div className="flex flex-col items-center justify-center w-full px-4 overflow-hidden">
+
+      {/* Background Orbs */}
+      <div className="absolute top-20 left-10 w-72 h-72 bg-violet-600/30 rounded-full blur-[100px] -z-10 animate-pulse-slow"></div>
+      <div className="absolute top-40 right-10 w-96 h-96 bg-cyan-600/20 rounded-full blur-[100px] -z-10 animate-float" style={{ animationDelay: '2s' }}></div>
+
+      {/* Hero Section */}
+      <section className="relative w-full max-w-7xl mx-auto pt-32 pb-20 text-center">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-panel text-sm text-violet-300 font-medium mb-8 animate-fade-in-up">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500"></span>
+          </span>
+          Next-Generation AI Voice Agents Available Now
+        </div>
+
+        <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8">
+          Voice AI that sounds <br className="hidden md:block" />
+          <span className="text-gradient">fundamentally human.</span>
+        </h1>
+
+        <p className="text-lg md:text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+          OmniVoice Labs provides intelligent agent-based systems that handle complex inbound and outbound calls using advanced Speech-to-Text, LLMs, and Text-to-Speech technologies.
+        </p>
+
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <Link
+            href="/try-for-free"
+            className="px-8 py-4 rounded-xl text-md font-semibold text-white bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 shadow-[0_0_40px_rgba(139,92,246,0.5)] transform hover:-translate-y-1 transition-all duration-300 w-full sm:w-auto"
+          >
+            Deploy your Agent — It's Free
+          </Link>
+          <Link
+            href="#features"
+            className="px-8 py-4 rounded-xl text-md font-semibold text-white glass hover:bg-white/10 transition-colors w-full sm:w-auto"
+          >
+            See how it works
           </Link>
         </div>
-        
-        {/* Features Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-          {/* Feature 1 - Twilio Integration */}
-          <div className="bg-gradient-to-b from-gray-800 to-gray-900 p-8 rounded-xl border border-gray-700 backdrop-blur-sm hover:shadow-xl hover:shadow-indigo-500/10 transition-all transform hover:-translate-y-1 duration-300">
-            <div className="w-16 h-16 mb-6 mx-auto bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center shadow-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+
+        {/* Dashboard Preview Mockup */}
+        <div className="mt-24 relative mx-auto w-full max-w-5xl">
+          <div className="absolute -inset-1 bg-gradient-to-r from-violet-600 to-cyan-600 rounded-2xl blur opacity-30"></div>
+          <div className="relative glass-panel rounded-2xl border border-white/10 p-2 shadow-2xl h-[400px] flex items-center justify-center overflow-hidden">
+            {/* Abstract wave visualization representing voice */}
+            <div className="flex items-center gap-1 opacity-50">
+              {[...Array(30)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-2 bg-gradient-to-t from-violet-500 to-cyan-400 rounded-full animate-pulse-slow"
+                  style={{
+                    height: `${Math.max(20, Math.sin(i * 0.5) * 100 + 120)}px`,
+                    animationDelay: `${i * 0.1}s`
+                  }}
+                ></div>
+              ))}
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/80"></div>
+            <div className="absolute bottom-10 text-center">
+              <p className="text-sm font-mono text-cyan-400">STATUS: AGENT ONLINE · WAITING FOR CALLS</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section id="features" className="w-full max-w-7xl mx-auto py-24">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl md:text-5xl font-bold mb-6">Built for the enterprise.</h2>
+          <p className="text-gray-400 max-w-2xl mx-auto text-lg">
+            Everything you need to automate your customer interactions without sounding like a robot.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {/* Feature 1 */}
+          <div className="glass-panel p-8 rounded-2xl hover:bg-white/5 transition-colors group">
+            <div className="w-14 h-14 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-2.896-1.596-5.48-4.08-7.076-6.975l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold mb-4 text-white">Twilio Integration</h2>
-            <div className="h-1 w-16 mx-auto my-3 bg-gradient-to-r from-blue-400 to-indigo-600 rounded-full"></div>
-            <p className="text-gray-300">
-              Handle inbound calls seamlessly through Twilio's API with advanced routing and real-time processing capabilities.
+            <h3 className="text-xl font-bold text-white mb-3">Instant Twilio Sync</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Connect your Twilio phone numbers in seconds. Our infrastructure handles the bi-directional audio streaming with near-zero latency.
             </p>
           </div>
-          
-          {/* Feature 2 - AI Agents */}
-          <div className="bg-gradient-to-b from-gray-800 to-gray-900 p-8 rounded-xl border border-gray-700 backdrop-blur-sm hover:shadow-xl hover:shadow-purple-500/10 transition-all transform hover:-translate-y-1 duration-300">
-            <div className="w-16 h-16 mb-6 mx-auto bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center shadow-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+
+          {/* Feature 2 */}
+          <div className="glass-panel p-8 rounded-2xl hover:bg-white/5 transition-colors group">
+            <div className="w-14 h-14 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.98 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold mb-4 text-white">AI-Powered Agents</h2>
-            <div className="h-1 w-16 mx-auto my-3 bg-gradient-to-r from-purple-400 to-indigo-600 rounded-full"></div>
-            <p className="text-gray-300">
-              Specialized intelligent agents handle different types of user queries with impressive accuracy and natural language understanding.
+            <h3 className="text-xl font-bold text-white mb-3">RAG Knowledge Base</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Upload your PDFs, internal docs, or JSON FAQs. The agent automatically ingests them into Pinecone and references them accurately.
             </p>
           </div>
-          
-          {/* Feature 3 - Analytics */}
-          <div className="bg-gradient-to-b from-gray-800 to-gray-900 p-8 rounded-xl border border-gray-700 backdrop-blur-sm hover:shadow-xl hover:shadow-blue-500/10 transition-all transform hover:-translate-y-1 duration-300">
-            <div className="w-16 h-16 mb-6 mx-auto bg-gradient-to-br from-blue-600 to-purple-600 rounded-full flex items-center justify-center shadow-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+
+          {/* Feature 3 */}
+          <div className="glass-panel p-8 rounded-2xl hover:bg-white/5 transition-colors group">
+            <div className="w-14 h-14 rounded-xl bg-pink-500/20 text-pink-400 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 19.5 16.5h-2.25m-9 0h9m-9 0 1.25 5.092m7.5-5.092-1.25 5.092m-5.83-5.092h5.83" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold mb-4 text-white">Advanced Analytics</h2>
-            <div className="h-1 w-16 mx-auto my-3 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full"></div>
-            <p className="text-gray-300">
-              Monitor system usage and agent performance with comprehensive analytics for continuous improvement and optimization.
+            <h3 className="text-xl font-bold text-white mb-3">Live Call Analytics</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Monitor transcriptions, sentiment, and agent routing in real-time. Automatically categorize calls into inquiries, bookings, or complaints.
             </p>
           </div>
         </div>
-        
-        {/* Metallic Badge */}
-        <div className="mt-20 mb-8">
-          <div className="inline-block py-2 px-6 bg-gradient-to-r from-gray-700 via-gray-500 to-gray-700 rounded-full text-white text-sm font-medium shadow-inner border border-gray-600">
-            Enterprise-Grade AI Technology
-          </div>
-        </div>
-      </div>
-      
-      {/* Footer with metallic effect */}
-      <footer className="w-full py-6 bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 border-t border-gray-800">
-        <div className="text-center text-gray-500 text-sm">
-          © {new Date().getFullYear()} AI-Powered Inbound Calling System. All rights reserved.
-        </div>
-      </footer>
-    </main>
+      </section>
+    </div>
   );
 }
