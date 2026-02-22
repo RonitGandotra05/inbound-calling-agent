@@ -1,5 +1,7 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Navbar from "@/components/layout/Navbar";
+import Footer from "@/components/layout/Footer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,17 +14,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "AI-Powered Inbound Calling System",
-  description: "Intelligent agent-based system that handles inbound calls using advanced Speech-to-Text and Text-to-Speech technologies",
+  title: "OmniVoice Labs | Next-Gen AI Phone Agents",
+  description: "Deploy intelligent, human-like voice agents for inbound and outbound customer support in minutes.",
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased selection:bg-violet-500/30 selection:text-white`}
       >
-        {children}
+        <div className="relative flex flex-col min-h-screen">
+          <Navbar />
+          <main className="flex-grow pt-20">
+            {children}
+          </main>
+          <Footer />
+        </div>
       </body>
     </html>
   );
