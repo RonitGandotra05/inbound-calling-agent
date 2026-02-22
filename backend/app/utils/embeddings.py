@@ -125,6 +125,23 @@ def index_document(
     return {"total": len(chunks), "indexed": len(vectors)}
 
 
+async def index_text(
+    company_id: str,
+    text: str,
+    metadata: dict | None = None,
+) -> dict:
+    """Wrapper to directly index a block of text without a real document."""
+    import uuid
+    dummy_doc_id = str(uuid.uuid4())
+    # Call the synchronous index_document method
+    return index_document(
+        company_id=company_id,
+        document_id=dummy_doc_id,
+        content=text,
+        metadata=metadata
+    )
+
+
 # ── Search ────────────────────────────────────────────────────────────
 
 def search_knowledge(
