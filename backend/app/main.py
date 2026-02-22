@@ -126,10 +126,10 @@ async def health(detailed: bool = False):
 
 
 # Register API routers
-from app.api import companies, knowledge, agent
+from app.api import companies, knowledge, agent, twilio
 
 app.include_router(companies.router, prefix="/api/companies", tags=["companies"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
-
+app.include_router(twilio.router, prefix="/api/twilio", tags=["twilio"])
 
