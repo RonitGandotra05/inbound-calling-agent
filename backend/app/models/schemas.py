@@ -21,6 +21,20 @@ def _validate_phone(v: str | None) -> str | None:
     return v
 
 
+# ---- Auth Schemas ----
+
+class SSOLoginRequest(BaseModel):
+    email: EmailStr
+    name: Optional[str] = None
+    provider: str  # 'google', 'apple', 'linkedin'
+    sso_id: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: UUID
+
+
 # ---- Company Schemas ----
 
 class ServiceCreate(BaseModel):

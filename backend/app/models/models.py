@@ -12,6 +12,35 @@ from sqlalchemy.orm import relationship
 from app.config.database import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(255))
+    sso_provider = Column(String(50))  # e.g., 'google', 'apple', 'linkedin'
+    sso_id = Column(String(255))       # The unique remote ID from the provider
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    # Relationships
+    companies = relationship("CompanyUser", back_populates="user", cascade="all, delete-orphan")
+
+
+class CompanyUser(Base):
+    __tablename__ = "company_users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(50), default="admin")  # admin, viewer, etc.
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="companies")
+    company = relationship("Company", back_populates="users")
+
+
 class Company(Base):
     __tablename__ = "companies"
 
@@ -37,6 +66,7 @@ class Company(Base):
     documents = relationship("KnowledgeDocument", back_populates="company", cascade="all, delete-orphan")
     interactions = relationship("Interaction", back_populates="company", cascade="all, delete-orphan")
     api_keys = relationship("ApiKey", back_populates="company", cascade="all, delete-orphan")
+    users = relationship("CompanyUser", back_populates="company", cascade="all, delete-orphan")
 
 
 class CompanyService(Base):
